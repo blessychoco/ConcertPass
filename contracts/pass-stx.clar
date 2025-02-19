@@ -143,3 +143,64 @@
   )
 )
 
+;; Purchase pass
+(define-public (purchase-pass (pass-id (string-ascii 100)))
+  (let ((pass-info (unwrap! (get-pass-metadata pass-id) ERR-PASS-NOT-FOUND)))
+    (begin
+      ;; Check if concert has not been cancelled
+      (asserts! (not (get is-cancelled pass-info)) (err u108))
+      
+      ;; Check if pass sales haven't exceeded venue capacity
+      (asserts! 
+        (< (get tickets-sold pass-info) (get venue-capacity pass-info)) 
+        ERR-VENUE-FULL
+      )
+      
+      ;; Transfer pass price
+      (try! (stx-transfer? (get pass-price pass-info) tx-sender CONTRACT-OWNER))
+      
+      ;; Update tickets sold
+      (map-set pass-metadata 
+        {pass-id: pass-id}
+        (merge pass-info {tickets-sold: (+ (get tickets-sold pass-info) u1)})
+      )
+      
+      ;; Record pass holder
+      (map-set concert-pass-holders 
+        {pass-id: pass-id, pass-owner: tx-sender} 
+        true
+      )
+      
+      ;; Mint pass NFT to purchaser
+      (nft-mint? concert-pass pass-id tx-sender)
+    )
+  )
+)
+
+;; Transfer pass
+(define-public (transfer-pass 
+  (pass-id (string-ascii 100)) 
+  (new-owner principal)
+)
+  (begin
+    ;; Validate transfer recipient
+    (asserts! (is-valid-principal new-owner) ERR-INVALID-TRANSFER-RECIPIENT)
+    
+    ;; Ensure only current pass owner can transfer
+    (asserts! 
+      (is-eq tx-sender (unwrap! (nft-get-owner? concert-pass pass-id) ERR-PASS-NOT-FOUND)) 
+      ERR-UNAUTHORIZED-TRANSFER
+    )
+    
+    ;; Transfer pass ownership map
+    (map-delete concert-pass-holders {pass-id: pass-id, pass-owner: tx-sender})
+    (map-set concert-pass-holders 
+      {pass-id: pass-id, pass-owner: new-owner} 
+      true
+    )
+    
+    ;; Transfer NFT
+    (nft-transfer? concert-pass pass-id tx-sender new-owner)
+  )
+)
+
