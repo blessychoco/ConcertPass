@@ -204,3 +204,52 @@
   )
 )
 
+;; Cancel Concert
+(define-public (cancel-concert (pass-id (string-ascii 100)))
+  (let ((pass-info (unwrap! (get-pass-metadata pass-id) ERR-PASS-NOT-FOUND)))
+    (begin
+      ;; Ensure only contract owner can cancel
+      (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-OWNER)
+      
+      ;; Ensure concert hasn't already been cancelled
+      (asserts! (not (get is-cancelled pass-info)) ERR-SHOW-ALREADY-CANCELLED)
+      
+      ;; Mark concert as cancelled
+      (map-set pass-metadata 
+        {pass-id: pass-id}
+        (merge pass-info {is-cancelled: true})
+      )
+      
+      (ok true)
+    )
+  )
+)
+
+;; Refund Pass
+(define-public (refund-pass (pass-id (string-ascii 100)))
+  (let (
+    (pass-info (unwrap! (get-pass-metadata pass-id) ERR-PASS-NOT-FOUND))
+    (pass-owner (unwrap! (nft-get-owner? concert-pass pass-id) ERR-PASS-NOT-FOUND))
+  )
+    (begin
+      ;; Ensure concert is cancelled
+      (asserts! (get is-cancelled pass-info) (err u109))
+      
+      ;; Ensure caller is pass owner
+      (asserts! (is-eq tx-sender pass-owner) ERR-UNAUTHORIZED-TRANSFER)
+      
+      ;; Burn the pass NFT
+      (try! (nft-burn? concert-pass pass-id tx-sender))
+      
+      ;; Refund pass price
+      (try! (stx-transfer? (get pass-price pass-info) CONTRACT-OWNER tx-sender))
+      
+      ;; Remove pass holder
+      (map-delete concert-pass-holders 
+        {pass-id: pass-id, pass-owner: tx-sender}
+      )
+      
+      (ok true)
+    )
+  )
+)
