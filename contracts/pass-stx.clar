@@ -1,30 +1,145 @@
+;; ConcertPass NFT Ticketing Smart Contract
+;; SPDX-License-Identifier: MIT
 
-;; title: pass-stx
-;; version:
-;; summary:
-;; description:
+(define-non-fungible-token concert-pass (string-ascii 100))
 
-;; traits
-;;
+;; Constants
+(define-constant CONTRACT-OWNER tx-sender)
+(define-constant ERR-NOT-OWNER (err u100))
+(define-constant ERR-PASS-ALREADY-MINTED (err u101))
+(define-constant ERR-PASS-NOT-FOUND (err u102))
+(define-constant ERR-UNAUTHORIZED-TRANSFER (err u103))
+(define-constant ERR-INVALID-INPUT (err u104))
+(define-constant ERR-VENUE-FULL (err u105))
+(define-constant ERR-SHOW-ALREADY-CANCELLED (err u106))
+(define-constant ERR-REFUND-FAILED (err u107))
+(define-constant ERR-PASSES-ALREADY-SOLD (err u108))
+(define-constant ERR-INVALID-TRANSFER-RECIPIENT (err u109))
 
-;; token definitions
-;;
+;; Input Validation Functions
+(define-private (is-valid-concert-name (name (string-ascii 100)))
+  (and 
+    (> (len name) u0) 
+    (<= (len name) u100)
+  )
+)
 
-;; constants
-;;
+(define-private (is-valid-show-time (time (string-ascii 50)))
+  (and 
+    (> (len time) u0) 
+    (<= (len time) u50)
+  )
+)
 
-;; data vars
-;;
+(define-private (is-valid-pass-price (price uint))
+  (> price u0)
+)
 
-;; data maps
-;;
+(define-private (is-valid-venue-capacity (capacity uint))
+  (> capacity u0)
+)
 
-;; public functions
-;;
+;; Principal Validation Function
+(define-private (is-valid-principal (addr principal))
+  (not (is-eq addr CONTRACT-OWNER))
+)
 
-;; read only functions
-;;
+;; Storage
+(define-map pass-metadata 
+  {pass-id: (string-ascii 100)} 
+  {
+    concert-name: (string-ascii 100),
+    show-time: (string-ascii 50),
+    pass-price: uint,
+    venue-capacity: uint,
+    tickets-sold: uint,
+    is-cancelled: bool
+  }
+)
 
-;; private functions
-;;
+;; Tracks pass holders for each concert
+(define-map concert-pass-holders 
+  {pass-id: (string-ascii 100), pass-owner: principal} 
+  bool
+)
+
+;; Read-only functions
+(define-read-only (get-pass-owner (pass-id (string-ascii 100)))
+  (nft-get-owner? concert-pass pass-id)
+)
+
+(define-read-only (get-pass-metadata (pass-id (string-ascii 100)))
+  (map-get? pass-metadata {pass-id: pass-id})
+)
+
+;; Mint new concert pass
+(define-public (mint-pass 
+  (pass-id (string-ascii 100))
+  (concert-name (string-ascii 100))
+  (show-time (string-ascii 50))
+  (pass-price uint)
+  (venue-capacity uint)
+)
+  (begin
+    ;; Validate inputs
+    (asserts! (is-valid-concert-name concert-name) ERR-INVALID-INPUT)
+    (asserts! (is-valid-show-time show-time) ERR-INVALID-INPUT)
+    (asserts! (is-valid-pass-price pass-price) ERR-INVALID-INPUT)
+    (asserts! (is-valid-venue-capacity venue-capacity) ERR-INVALID-INPUT)
+    
+    ;; Ensure pass hasn't been minted before
+    (asserts! (is-none (get-pass-metadata pass-id)) ERR-PASS-ALREADY-MINTED)
+    
+    ;; Create pass metadata
+    (map-set pass-metadata 
+      {pass-id: pass-id}
+      {
+        concert-name: concert-name,
+        show-time: show-time,
+        pass-price: pass-price,
+        venue-capacity: venue-capacity,
+        tickets-sold: u0,
+        is-cancelled: false
+      }
+    )
+    
+    ;; Mint NFT to contract owner
+    (nft-mint? concert-pass pass-id CONTRACT-OWNER)
+  )
+)
+
+;; Update Concert Details
+(define-public (update-concert-details
+  (pass-id (string-ascii 100))
+  (new-concert-name (string-ascii 100))
+  (new-show-time (string-ascii 50))
+  (new-pass-price uint)
+)
+  (let ((pass-info (unwrap! (get-pass-metadata pass-id) ERR-PASS-NOT-FOUND)))
+    (begin
+      ;; Ensure only contract owner can update
+      (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-OWNER)
+      
+      ;; Prevent updates after passes have been sold
+      (asserts! (is-eq (get tickets-sold pass-info) u0) ERR-PASSES-ALREADY-SOLD)
+      
+      ;; Validate new inputs
+      (asserts! (is-valid-concert-name new-concert-name) ERR-INVALID-INPUT)
+      (asserts! (is-valid-show-time new-show-time) ERR-INVALID-INPUT)
+      (asserts! (is-valid-pass-price new-pass-price) ERR-INVALID-INPUT)
+      
+      ;; Update pass metadata
+      (map-set pass-metadata 
+        {pass-id: pass-id}
+        (merge pass-info {
+          concert-name: new-concert-name,
+          show-time: new-show-time,
+          pass-price: new-pass-price
+        })
+      )
+      
+      (ok true)
+    )
+  )
+)
 
